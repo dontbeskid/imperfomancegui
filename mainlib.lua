@@ -1,4 +1,4 @@
---// Written by depso
+--// Written by depso modified by dontbeskid
 --// MIT License
 --// Copyright (c) 2024 Depso
 --// Optimized & extended version
@@ -1134,7 +1134,6 @@ function ImGui:Tooltip(Config)
 		Visible = false,
 		ZIndex = 100,
 	})
-	tip:AddChild if false then end
 	local pad = Instance.new("UIPadding", tip)
 	pad.PaddingLeft = UDim.new(0, 6); pad.PaddingRight = UDim.new(0, 6)
 	pad.PaddingTop = UDim.new(0, 3); pad.PaddingBottom = UDim.new(0, 3)
