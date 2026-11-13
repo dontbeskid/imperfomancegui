@@ -34,7 +34,7 @@
 -- ------------------------------------------------------------------
 
 local ImGui = {
-	Version = "2.0",
+	Version = "2.1",
 
 	Animations = {
 		Buttons = {
@@ -178,22 +178,54 @@ local Prefabs = UI.Prefabs
 ImGui.Prefabs = Prefabs
 Prefabs.Visible = false
 
---// NEW: purge leftover demo elements shipped inside the prefab asset
---// (e.g. Depso's "Skibidi toliet," button that shows up in dropdowns)
+--// NEW (v2.1): purge leftover demo elements shipped inside the prefab
+--// asset. Depso's asset contains a demo TextButton "Item" with the text
+--// "Skibidi toliet," that used to leak onto every cloned widget.
+--// We scan the WHOLE asset model (not only the Prefabs folder), match
+--// "skibidi"/"toliet" in the Text AND the Name, and destroy the nearest
+--// button ancestor (or the element itself) so no demo junk can survive.
 do
-	local function PurgeDemoJunk(Root)
-		for _, Desc in next, Root:GetDescendants() do
-			local Text = Desc:IsA("TextLabel") and string.lower(Desc.Text) or ""
-			if string.find(Text, "skibidi", 1, true) then
-				if Desc:IsA("TextButton") then
-					Desc:Destroy()
-				elseif Desc.Parent and Desc.Parent:IsA("TextButton") then
-					Desc.Parent:Destroy()
-				end
+	local JunkPatterns = { "skibidi", "toliet" }
+
+	local function ContainsJunk(Value)
+		local Lower = string.lower(Value)
+		for _, Pattern in next, JunkPatterns do
+			if string.find(Lower, Pattern, 1, true) then
+				return true
 			end
 		end
+		return false
 	end
-	PurgeDemoJunk(Prefabs)
+
+	function ImGui:PurgeDemoJunk(Root)
+		if not Root then return 0 end
+		local Removed = 0
+		for _, Desc in next, Root:GetDescendants() do
+			local Matched = false
+			if Desc:IsA("TextLabel") and ContainsJunk(Desc.Text) then
+				Matched = true
+			end
+			if not Matched and ContainsJunk(Desc.Name) then
+				Matched = true
+			end
+			if Matched then
+				--// Prefer killing the whole demo button around the text
+				local Target = Desc
+				local Ancestor = Desc.Parent
+				while Ancestor and Ancestor ~= Root and not Ancestor:IsA("GuiButton") do
+					Ancestor = Ancestor.Parent
+				end
+				if Ancestor and Ancestor ~= Root and Ancestor:IsA("GuiButton") then
+					Target = Ancestor
+				end
+				Target:Destroy()
+				Removed += 1
+			end
+		end
+		return Removed
+	end
+
+	ImGui.DemoJunkRemoved = ImGui:PurgeDemoJunk(UI)
 end
 
 --// Styles
@@ -2497,5 +2529,10 @@ table.insert(ImGui.Connections, UserInputService.InputBegan:Connect(function(Inp
 		ImGui:SetWindowsVisible(not ImGui.WindowsVisible)
 	end
 end))
+
+--// Load marker: if this line is NOT in your console, the executor is
+--// still running an OLD copy of the library (re-upload mainlib.lua!)
+print("[DepsoImGui v" .. ImGui.Version .. "] loaded | demo-junk purged: "
+	.. tostring(ImGui.DemoJunkRemoved) .. " element(s)")
 
 return ImGui
