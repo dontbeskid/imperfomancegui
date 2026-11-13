@@ -178,6 +178,24 @@ local Prefabs = UI.Prefabs
 ImGui.Prefabs = Prefabs
 Prefabs.Visible = false
 
+--// NEW: purge leftover demo elements shipped inside the prefab asset
+--// (e.g. Depso's "Skibidi toliet," button that shows up in dropdowns)
+do
+	local function PurgeDemoJunk(Root)
+		for _, Desc in next, Root:GetDescendants() do
+			local Text = Desc:IsA("TextLabel") and string.lower(Desc.Text) or ""
+			if string.find(Text, "skibidi", 1, true) then
+				if Desc:IsA("TextButton") then
+					Desc:Destroy()
+				elseif Desc.Parent and Desc.Parent:IsA("TextButton") then
+					Desc.Parent:Destroy()
+				end
+			end
+		end
+	end
+	PurgeDemoJunk(Prefabs)
+end
+
 --// Styles
 local AddionalStyles = {
 	[{
@@ -485,7 +503,20 @@ function ImGui:ContainerClass(Frame: Frame, Class, Window)
 	function ContainerClass:Label(Config)
 		Config = Config or {}
 		local Label = Prefabs.Label:Clone()
-		return self:NewInstance(Label, Config)
+		local ObjectClass = self:NewInstance(Label, Config)
+
+		--// FIXED: SetLabel was only defined by the "Label" style handler
+		--// (and only when the config had a .Label field), so it threw
+		--// "missing method SetLabel" on plain Tab:Label({Text = ...})
+		function Config:SetLabel(Text)
+			local Target = Label:IsA("TextLabel") and Label or Label:FindFirstChild("Label")
+			if Target then
+				Target.Text = tostring(Text)
+			end
+			return Config
+		end
+
+		return ObjectClass
 	end
 
 	function ContainerClass:Checkbox(Config)
@@ -1282,6 +1313,14 @@ function ImGui:Dropdown(Config)
 	if not Parent then return end
 
 	local Selection: ScrollingFrame = Prefabs.Selection:Clone()
+
+	--// NEW: drop demo items shipped inside the Selection prefab
+	--// (only Template is the real item source, anything else is junk)
+	for _, Child in next, Selection:GetChildren() do
+		if Child:IsA("TextButton") and Child.Name ~= "Template" then
+			Child:Destroy()
+		end
+	end
 	local UIStroke = Selection:FindFirstChildOfClass("UIStroke")
 
 	local Padding = UIStroke.Thickness*2
@@ -1784,6 +1823,14 @@ function ImGui:CreateWindow(WindowConfig)
 
 		local AutoSizeAxis = WindowConfig.AutoSize or "Y"
 		local Content: Frame = Body.Template:Clone()
+
+		--// NEW: purge demo elements shipped inside the Template prefab
+		--// (helper classes like UIListLayout/UIPadding are kept)
+		for _, Child in next, Content:GetChildren() do
+			if Child:IsA("GuiObject") then
+				Child:Destroy()
+			end
+		end
 		Content.AutomaticSize = Enum.AutomaticSize[AutoSizeAxis]
 		Content.Visible = Config.Visible or false
 		Content.Name = Name
@@ -1984,17 +2031,22 @@ function ImGui:ApplyAccent(Root, From: Color3, To: Color3)
 	if SameColor(From, To) then return end
 
 	for _, Object in next, Root:GetDescendants() do
-		if Object:IsA("GuiObject") then
-			if SameColor(Object.BackgroundColor3, From) then
-				Object.BackgroundColor3 = To
-			end
-			if SameColor(Object.TextColor3, From) then
-				Object.TextColor3 = To
-			end
-			if SameColor(Object.ImageColor3, From) then
-				Object.ImageColor3 = To
-			end
-		elseif Object:IsA("UIStroke") then
+		pcall(function()
+			if Object:IsA("GuiObject") then
+				if SameColor(Object.BackgroundColor3, From) then
+					Object.BackgroundColor3 = To
+				end
+				if SameColor(Object.TextColor3, From) then
+					Object.TextColor3 = To
+				end
+				--// FIXED: ImageColor3 only exists on image elements,
+				--// reading it on TextButton/Frame threw and killed SetAccent
+				if Object:IsA("ImageLabel") or Object:IsA("ImageButton") then
+					if SameColor(Object.ImageColor3, From) then
+						Object.ImageColor3 = To
+					end
+				end
+			elseif Object:IsA("UIStroke") then
 			if SameColor(Object.Color, From) then
 				Object.Color = To
 			end
@@ -2012,9 +2064,10 @@ function ImGui:ApplyAccent(Root, From: Color3, To: Color3)
 			end
 
 			if Changed then
-				Object.Color = ColorSequence.new(Keypoints)
+					Object.Color = ColorSequence.new(Keypoints)
+				end
 			end
-		end
+		end)
 	end
 end
 
