@@ -1,4 +1,4 @@
---// Written by depso modified by z.ai :3
+--// Written by depso
 --// MIT License
 --// Copyright (c) 2024 Depso
 -- ------------------------------------------------------------------
