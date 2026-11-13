@@ -2604,3 +2604,4 @@ print("[DepsoImGui v" .. ImGui.Version .. "] loaded | demo-junk purged: "
 	.. tostring(ImGui.DemoJunkRemoved) .. " element(s)")
 
 return ImGui
+ 
