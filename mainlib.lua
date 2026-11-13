@@ -1,4 +1,4 @@
---// Written by depso
+--// Written by depso modified by z.ai :3
 --// MIT License
 --// Copyright (c) 2024 Depso
 -- ------------------------------------------------------------------
@@ -34,7 +34,7 @@
 -- ------------------------------------------------------------------
 
 local ImGui = {
-	Version = "2.1",
+	Version = "2.2",
 
 	Animations = {
 		Buttons = {
@@ -178,12 +178,14 @@ local Prefabs = UI.Prefabs
 ImGui.Prefabs = Prefabs
 Prefabs.Visible = false
 
---// NEW (v2.1): purge leftover demo elements shipped inside the prefab
+--// NEW (v2.2): purge leftover demo elements shipped inside the prefab
 --// asset. Depso's asset contains a demo TextButton "Item" with the text
 --// "Skibidi toliet," that used to leak onto every cloned widget.
---// We scan the WHOLE asset model (not only the Prefabs folder), match
---// "skibidi"/"toliet" in the Text AND the Name, and destroy the nearest
---// button ancestor (or the element itself) so no demo junk can survive.
+--// Junk NESTED inside a prefab is destroyed (nearest button ancestor).
+--// Top-level prefabs (direct children of the Prefabs folder) are kept:
+--// some of them ARE used widgets (e.g. the current asset ships the Button
+--// prefab as a bare demo TextButton), so for those we only clear the junk
+--// text - the widget code writes the real label afterwards.
 do
 	local JunkPatterns = { "skibidi", "toliet" }
 
@@ -197,7 +199,7 @@ do
 		return false
 	end
 
-	function ImGui:PurgeDemoJunk(Root)
+	function ImGui:PurgeDemoJunk(Root, PrefabsFolder)
 		if not Root then return 0 end
 		local Removed = 0
 		for _, Desc in next, Root:GetDescendants() do
@@ -209,23 +211,31 @@ do
 				Matched = true
 			end
 			if Matched then
-				--// Prefer killing the whole demo button around the text
-				local Target = Desc
-				local Ancestor = Desc.Parent
-				while Ancestor and Ancestor ~= Root and not Ancestor:IsA("GuiButton") do
-					Ancestor = Ancestor.Parent
+				if PrefabsFolder and Desc.Parent == PrefabsFolder then
+					--// top-level prefab in use: clear the junk text only
+					if Desc:IsA("TextLabel") and Desc.Text ~= "" then
+						Desc.Text = ""
+						Removed += 1
+					end
+				else
+					--// nested demo element: kill the whole demo button
+					local Target = Desc
+					local Ancestor = Desc.Parent
+					while Ancestor and Ancestor ~= Root and not Ancestor:IsA("GuiButton") do
+						Ancestor = Ancestor.Parent
+					end
+					if Ancestor and Ancestor ~= Root and Ancestor:IsA("GuiButton") then
+						Target = Ancestor
+					end
+					Target:Destroy()
+					Removed += 1
 				end
-				if Ancestor and Ancestor ~= Root and Ancestor:IsA("GuiButton") then
-					Target = Ancestor
-				end
-				Target:Destroy()
-				Removed += 1
 			end
 		end
 		return Removed
 	end
 
-	ImGui.DemoJunkRemoved = ImGui:PurgeDemoJunk(UI)
+	ImGui.DemoJunkRemoved = ImGui:PurgeDemoJunk(UI, Prefabs)
 end
 
 --// Styles
@@ -492,6 +502,25 @@ function ImGui:ContainerClass(Frame: Frame, Class, Window)
 		Config = Config or {}
 		local Button = Prefabs.Button:Clone()
 		local ObjectClass = self:NewInstance(Button, Config)
+
+		--// FIXED (v2.2): the current prefab asset ships the Button prefab
+		--// as a bare demo TextButton ("Skibidi toliet,") with no "Label"
+		--// child, so the label style handler never ran and every button
+		--// showed the junk text. Resolve the label target ourselves and
+		--// always write Config.Label onto it.
+		local LabelTarget = Button:FindFirstChild("Label")
+		if not (LabelTarget and LabelTarget:IsA("TextLabel")) then
+			LabelTarget = Button:IsA("TextLabel") and Button or nil
+		end
+		if LabelTarget then
+			LabelTarget.Text = tostring(Config.Label or Config.Text or "")
+			if type(Config.SetLabel) ~= "function" then
+				function Config:SetLabel(Text)
+					LabelTarget.Text = tostring(Text)
+					return Config
+				end
+			end
+		end
 
 		local function Callback(...)
 			local func = Config.Callback or NullFunction
@@ -2229,7 +2258,7 @@ end
 
 function ImGui:Notify(Config)
 	Config = Config or {}
-	local Accent = self.Theme.Accent
+	local AccentColor = self.Theme.Current or self.Theme.Accent
 
 	--// Holder (created once)
 	local Holder = self.NotifyHolder
@@ -2252,31 +2281,64 @@ function ImGui:Notify(Config)
 
 	local Duration = Config.Duration or 3
 
-	--// Notification frame
+	--// Style sources: pull the real ImGui look from the prefabs so
+	--// notifications always match the current window/theme
+	local WindowPrefab = Prefabs.Window
+	local CardColor = WindowPrefab and WindowPrefab.BackgroundColor3
+		or Color3.fromRGB(24, 24, 30)
+
+	local TitleFont, TitleSize = Enum.Font.GothamMedium, 14
+	pcall(function()
+		local Ref = WindowPrefab.Content.TitleBar.Left.Title
+		if Ref:IsA("TextLabel") then
+			TitleFont = Ref.Font
+			TitleSize = Ref.TextSize
+		end
+	end)
+	local BodyColor = Color3.fromRGB(180, 180, 190)
+	pcall(function()
+		if Prefabs.Label:IsA("TextLabel") then
+			BodyColor = Prefabs.Label.TextColor3
+		end
+	end)
+
+	--// Notification frame (mini ImGui window: card color + accent
+	--// stroke + left accent strip + accent title in the prefab font)
 	local Frame = ImGui:CreateInstance("Frame", Holder, {
 		Name = "Notification",
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Color3.fromRGB(24, 24, 30),
+		BackgroundColor3 = CardColor,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		LayoutOrder = -math.floor(os.clock()), --// newest on top
 	})
 	ImGui:CreateInstance("UICorner", Frame, {CornerRadius = UDim.new(0, 8)})
 	local Stroke = ImGui:CreateInstance("UIStroke", Frame, {
-		Color = Accent,
+		Color = AccentColor,
 		Thickness = 1,
 		Transparency = 1,
 	})
 	ImGui:CreateInstance("UIPadding", Frame, {
 		PaddingTop = UDim.new(0, 10),
 		PaddingBottom = UDim.new(0, 10),
-		PaddingLeft = UDim.new(0, 12),
+		PaddingLeft = UDim.new(0, 14),
 		PaddingRight = UDim.new(0, 12),
 	})
 	ImGui:CreateInstance("UIListLayout", Frame, {
 		Padding = UDim.new(0, 4),
 		VerticalAlignment = Enum.VerticalAlignment.Top,
+	})
+
+	--// Left accent strip (same accent line the windows use)
+	ImGui:CreateInstance("Frame", Frame, {
+		Name = "AccentBar",
+		AnchorPoint = Vector2.new(0, 0),
+		Position = UDim2.new(0, 0, 0, 0),
+		Size = UDim2.new(0, 3, 1, 0),
+		BackgroundColor3 = AccentColor,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
 	})
 
 	--// Header (icon + title)
@@ -2305,9 +2367,9 @@ function ImGui:Notify(Config)
 		Size = UDim2.new(1, Icon and -24 or 0, 1, 0),
 		BackgroundTransparency = 1,
 		Text = tostring(Config.Title or "Notification"),
-		TextColor3 = Color3.fromRGB(240, 240, 245),
-		TextSize = 14,
-		Font = Enum.Font.GothamMedium,
+		TextColor3 = AccentColor,
+		TextSize = TitleSize,
+		Font = TitleFont,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTransparency = 1,
 	})
@@ -2322,9 +2384,9 @@ function ImGui:Notify(Config)
 			Text = BodyText,
 			TextWrapped = true,
 			RichText = Config.RichText == true,
-			TextColor3 = Color3.fromRGB(180, 180, 190),
-			TextSize = 13,
-			Font = Enum.Font.Gotham,
+			TextColor3 = BodyColor,
+			TextSize = math.max(12, TitleSize - 1),
+			Font = TitleFont,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextTransparency = 1,
 		})
@@ -2341,6 +2403,9 @@ function ImGui:Notify(Config)
 	if Body then
 		ImGui:Tween(Body, {TextTransparency = 0}, Info)
 	end
+	pcall(function()
+		ImGui:Tween(Frame.AccentBar, {BackgroundTransparency = 0}, Info)
+	end)
 
 	--// API
 	local Notification = {
@@ -2362,6 +2427,9 @@ function ImGui:Notify(Config)
 		ImGui:Tween(Frame, {BackgroundTransparency = 1}, CloseInfo)
 		ImGui:Tween(Stroke, {Transparency = 1}, CloseInfo)
 		ImGui:Tween(Title, {TextTransparency = 1}, CloseInfo)
+		pcall(function()
+			ImGui:Tween(Frame.AccentBar, {BackgroundTransparency = 1}, CloseInfo)
+		end)
 		if Icon then
 			ImGui:Tween(Icon, {ImageTransparency = 1}, CloseInfo)
 		end
